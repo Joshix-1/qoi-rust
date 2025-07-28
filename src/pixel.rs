@@ -1,5 +1,4 @@
 use crate::consts::{QOI_OP_DIFF, QOI_OP_LUMA, QOI_OP_RGB, QOI_OP_RGBA};
-use crate::error::Result;
 use crate::utils::Writer;
 use bytemuck::{cast, Pod};
 
@@ -15,15 +14,7 @@ impl<const N: usize> Pixel<N> {
 
     #[inline]
     pub fn read(&mut self, s: &[u8]) {
-        if s.len() == N {
-            let mut i = 0;
-            while i < N {
-                self.0[i] = s[i];
-                i += 1;
-            }
-        } else {
-            unreachable!();
-        }
+        self.0.copy_from_slice(s);
     }
 
     #[inline]
@@ -140,7 +131,7 @@ impl<const N: usize> Pixel<N> {
     }
 
     #[inline]
-    pub fn encode_into<W: Writer>(&self, px_prev: Self, buf: W) -> Result<W> {
+    pub fn encode_into<W: Writer<Error = E>, E>(&self, px_prev: Self, buf: W) -> Result<W, E> {
         if N == 3 || self.a_or(0) == px_prev.a_or(0) {
             let vg = self.g().wrapping_sub(px_prev.g());
             let vg_32 = vg.wrapping_add(32);

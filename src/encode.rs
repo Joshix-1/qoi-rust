@@ -1,24 +1,24 @@
 #[cfg(any(feature = "std", feature = "alloc"))]
 use alloc::{vec, vec::Vec};
+use core::convert::Infallible;
 #[cfg(feature = "std")]
 use std::io::Write;
 
 use bytemuck::Pod;
 
 use crate::consts::{QOI_HEADER_SIZE, QOI_OP_INDEX, QOI_OP_RUN, QOI_PADDING, QOI_PADDING_SIZE};
-use crate::error::{Error, Result};
 use crate::header::Header;
 use crate::pixel::{Pixel, SupportedChannels};
 use crate::types::{Channels, ColorSpace, SourceChannels};
 #[cfg(feature = "std")]
 use crate::utils::GenericWriter;
 use crate::utils::{unlikely, BytesMut, Writer};
+use crate::Error;
 
-#[allow(clippy::cast_possible_truncation, unused_assignments, unused_variables)]
-fn encode_impl<W: Writer, const N: usize, const R: usize>(
+fn encode_impl<W: Writer<Error = E>, E, const N: usize, const R: usize>(
     mut buf: W, data: &[u8], width: usize, height: usize, stride: usize,
     read_px: impl Fn(&mut Pixel<N>, &[u8]),
-) -> Result<usize>
+) -> Result<usize, E>
 where
     Pixel<N>: SupportedChannels,
     [u8; N]: Pod,
@@ -102,14 +102,14 @@ pub fn encode_max_len(width: u32, height: u32, channels: impl Into<u8>) -> usize
 #[inline]
 pub fn encode_to_buf(
     buf: impl AsMut<[u8]>, data: impl AsRef<[u8]>, width: u32, height: u32,
-) -> Result<usize> {
+) -> crate::Result<usize> {
     Encoder::new(&data, width, height)?.encode_to_buf(buf)
 }
 
 /// Encode the image into a newly allocated vector.
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[inline]
-pub fn encode_to_vec(data: impl AsRef<[u8]>, width: u32, height: u32) -> Result<Vec<u8>> {
+pub fn encode_to_vec(data: impl AsRef<[u8]>, width: u32, height: u32) -> crate::Result<Vec<u8>> {
     Encoder::new(&data, width, height)?.encode_to_vec()
 }
 
@@ -155,7 +155,7 @@ impl<'a> EncoderBuilder<'a> {
     }
 
     /// Build the encoder.
-    pub fn build(self) -> Result<Encoder<'a>> {
+    pub fn build(self) -> crate::Result<Encoder<'a>> {
         let EncoderBuilder { data, width, height, stride, source_channels, colorspace } = self;
 
         let size = data.len();
@@ -216,7 +216,7 @@ impl<'a> Encoder<'a> {
     /// are 3 or 4). The color space will be set to sRGB by default.
     #[inline]
     #[allow(clippy::cast_possible_truncation)]
-    pub fn new(data: &'a (impl AsRef<[u8]> + ?Sized), width: u32, height: u32) -> Result<Self> {
+    pub fn new(data: &'a (impl AsRef<[u8]> + ?Sized), width: u32, height: u32) -> crate::Result<Self> {
         EncoderBuilder::new(data, width, height).build()
     }
 
@@ -254,7 +254,7 @@ impl<'a> Encoder<'a> {
     ///
     /// The minimum size of the buffer can be found via [`Encoder::required_buf_len`].
     #[inline]
-    pub fn encode_to_buf(&self, mut buf: impl AsMut<[u8]>) -> Result<usize> {
+    pub fn encode_to_buf(&self, mut buf: impl AsMut<[u8]>) -> crate::Result<usize> {
         let buf = buf.as_mut();
         let size_required = self.required_buf_len();
         if unlikely(buf.len() < size_required) {
@@ -262,14 +262,16 @@ impl<'a> Encoder<'a> {
         }
         let (head, tail) = buf.split_at_mut(QOI_HEADER_SIZE); // can't panic
         head.copy_from_slice(&self.header.encode());
-        let n_written = self.encode_impl_all(BytesMut::new(tail))?;
+        let n_written = match self.encode_impl_all::<_,  Infallible>(BytesMut::new(tail)) {
+            Ok(n_written) => n_written,
+        };
         Ok(QOI_HEADER_SIZE + n_written)
     }
 
     /// Encodes the image into a newly allocated vector of bytes and returns it.
     #[cfg(any(feature = "alloc", feature = "std"))]
     #[inline]
-    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+    pub fn encode_to_vec(&self) -> crate::Result<Vec<u8>> {
         let mut out = vec![0_u8; self.required_buf_len()];
         let size = self.encode_to_buf(&mut out)?;
         out.truncate(size);
@@ -282,61 +284,61 @@ impl<'a> Encoder<'a> {
     /// it would more effficient to use a specialized method instead: [`Encoder::encode_to_buf`].
     #[cfg(feature = "std")]
     #[inline]
-    pub fn encode_to_stream<W: Write>(&self, writer: &mut W) -> Result<usize> {
+    pub fn encode_to_stream<W: Write>(&self, writer: &mut W) -> Result<usize, Error> {
         writer.write_all(&self.header.encode())?;
         let n_written = self.encode_impl_all(GenericWriter::new(writer))?;
         Ok(n_written + QOI_HEADER_SIZE)
     }
 
     #[inline]
-    fn encode_impl_all<W: Writer>(&self, out: W) -> Result<usize> {
+    fn encode_impl_all<W: Writer<Error = E>, E>(&self, out: W) -> Result<usize, E> {
         let width = self.header.width as usize;
         let height = self.header.height as usize;
         let stride = self.stride;
         match self.source_channels {
             SourceChannels::Rgb => {
-                encode_impl::<_, 3, 3>(out, self.data, width, height, stride, Pixel::read)
+                encode_impl::<_, E, 3, 3>(out, self.data, width, height, stride, Pixel::read)
             }
             SourceChannels::Bgr => {
-                encode_impl::<_, 3, 3>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, E, 3, 3>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgb(c[2], c[1], c[0]);
                 })
             }
             SourceChannels::Rgba => {
-                encode_impl::<_, 4, 4>(out, self.data, width, height, stride, Pixel::read)
+                encode_impl::<_, E, 4, 4>(out, self.data, width, height, stride, Pixel::read)
             }
             SourceChannels::Argb => {
-                encode_impl::<_, 4, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, E, 4, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgba(c[1], c[2], c[3], c[0]);
                 })
             }
             SourceChannels::Rgbx => {
-                encode_impl::<_, 3, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, E, 3, 4>(out, self.data, width, height, stride, |px, c| {
                     px.read(&c[..3]);
                 })
             }
             SourceChannels::Xrgb => {
-                encode_impl::<_, 3, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, E, 3, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgb(c[1], c[2], c[3]);
                 })
             }
             SourceChannels::Bgra => {
-                encode_impl::<_, 4, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, E, 4, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgba(c[2], c[1], c[0], c[3]);
                 })
             }
             SourceChannels::Abgr => {
-                encode_impl::<_, 4, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, E, 4, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgba(c[3], c[2], c[1], c[0]);
                 })
             }
             SourceChannels::Bgrx => {
-                encode_impl::<_, 3, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, E, 3, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgb(c[2], c[1], c[0]);
                 })
             }
             SourceChannels::Xbgr => {
-                encode_impl::<_, 4, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, E, 4, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgb(c[3], c[2], c[1]);
                 })
             }
