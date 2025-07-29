@@ -140,7 +140,7 @@ impl<const N: usize> Pixel<N> {
     }
 
     #[inline]
-    pub fn encode_into<W: Writer>(&self, px_prev: Self, buf: W) -> Result<W> {
+    pub fn encode_into<W: Writer<Error = E>, E: Into<crate::Error>>(&self, px_prev: Self, buf: W) -> Result<W, E> {
         if N == 3 || self.a_or(0) == px_prev.a_or(0) {
             let vg = self.g().wrapping_sub(px_prev.g());
             let vg_32 = vg.wrapping_add(32);

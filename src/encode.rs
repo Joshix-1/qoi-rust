@@ -15,10 +15,10 @@ use crate::utils::GenericWriter;
 use crate::utils::{unlikely, BytesMut, Writer};
 
 #[allow(clippy::cast_possible_truncation, unused_assignments, unused_variables)]
-fn encode_impl<W: Writer, const N: usize, const R: usize>(
+fn encode_impl<W: Writer<Error = E>, E: Into<crate::Error>, const N: usize, const R: usize>(
     mut buf: W, data: &[u8], width: usize, height: usize, stride: usize,
     read_px: impl Fn(&mut Pixel<N>, &[u8]),
-) -> Result<usize>
+) -> Result<usize, E>
 where
     Pixel<N>: SupportedChannels,
     [u8; N]: Pod,
@@ -262,7 +262,7 @@ impl<'a> Encoder<'a> {
         }
         let (head, tail) = buf.split_at_mut(QOI_HEADER_SIZE); // can't panic
         head.copy_from_slice(&self.header.encode());
-        let n_written = self.encode_impl_all(BytesMut::new(tail))?;
+        let Ok(n_written) = self.encode_impl_all(BytesMut::new(tail));
         Ok(QOI_HEADER_SIZE + n_written)
     }
 
@@ -289,54 +289,54 @@ impl<'a> Encoder<'a> {
     }
 
     #[inline]
-    fn encode_impl_all<W: Writer>(&self, out: W) -> Result<usize> {
+    fn encode_impl_all<W: Writer<Error = E>, E: Into<Error>>(&self, out: W) -> Result<usize, E> {
         let width = self.header.width as usize;
         let height = self.header.height as usize;
         let stride = self.stride;
         match self.source_channels {
             SourceChannels::Rgb => {
-                encode_impl::<_, 3, 3>(out, self.data, width, height, stride, Pixel::read)
+                encode_impl::<_, _, 3, 3>(out, self.data, width, height, stride, Pixel::read)
             }
             SourceChannels::Bgr => {
-                encode_impl::<_, 3, 3>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, _, 3, 3>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgb(c[2], c[1], c[0]);
                 })
             }
             SourceChannels::Rgba => {
-                encode_impl::<_, 4, 4>(out, self.data, width, height, stride, Pixel::read)
+                encode_impl::<_, _, 4, 4>(out, self.data, width, height, stride, Pixel::read)
             }
             SourceChannels::Argb => {
-                encode_impl::<_, 4, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, _, 4, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgba(c[1], c[2], c[3], c[0]);
                 })
             }
             SourceChannels::Rgbx => {
-                encode_impl::<_, 3, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, _, 3, 4>(out, self.data, width, height, stride, |px, c| {
                     px.read(&c[..3]);
                 })
             }
             SourceChannels::Xrgb => {
-                encode_impl::<_, 3, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, _, 3, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgb(c[1], c[2], c[3]);
                 })
             }
             SourceChannels::Bgra => {
-                encode_impl::<_, 4, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, _, 4, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgba(c[2], c[1], c[0], c[3]);
                 })
             }
             SourceChannels::Abgr => {
-                encode_impl::<_, 4, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, _, 4, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgba(c[3], c[2], c[1], c[0]);
                 })
             }
             SourceChannels::Bgrx => {
-                encode_impl::<_, 3, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, _, 3, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgb(c[2], c[1], c[0]);
                 })
             }
             SourceChannels::Xbgr => {
-                encode_impl::<_, 4, 4>(out, self.data, width, height, stride, |px, c| {
+                encode_impl::<_, _, 4, 4>(out, self.data, width, height, stride, |px, c| {
                     px.update_rgb(c[3], c[2], c[1]);
                 })
             }

@@ -29,8 +29,8 @@ pub enum Error {
     IoError(std::io::Error),
 }
 
-/// Alias for [`Result`](std::result::Result) with the error type of [`Error`].
-pub type Result<T> = core::result::Result<T, Error>;
+/// Alias for [`Result`](std::result::Result) with the default error type of [`Error`].
+pub type Result<T, E = Error> = core::result::Result<T, E>;
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

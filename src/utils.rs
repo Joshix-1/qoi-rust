@@ -1,7 +1,9 @@
+use core::convert::Infallible;
 #[cfg(feature = "std")]
 use std::io::Write;
 
 use crate::error::Result;
+use crate::Error;
 
 #[inline(always)]
 #[cold]
@@ -25,8 +27,10 @@ pub const fn unlikely(b: bool) -> bool {
 }
 
 pub trait Writer: Sized {
-    fn write_one(self, v: u8) -> Result<Self>;
-    fn write_many(self, v: &[u8]) -> Result<Self>;
+    type Error: Into<Error>;
+
+    fn write_one(self, v: u8) -> Result<Self, Self::Error>;
+    fn write_many(self, v: &[u8]) -> Result<Self, Self::Error>;
     fn capacity(&self) -> usize;
 }
 
@@ -60,13 +64,15 @@ impl<'a> BytesMut<'a> {
 }
 
 impl Writer for BytesMut<'_> {
+    type Error = Infallible;
+
     #[inline]
-    fn write_one(self, v: u8) -> Result<Self> {
+    fn write_one(self, v: u8) -> Result<Self, Self::Error> {
         Ok(BytesMut::write_one(self, v))
     }
 
     #[inline]
-    fn write_many(self, v: &[u8]) -> Result<Self> {
+    fn write_many(self, v: &[u8]) -> Result<Self, Self::Error> {
         Ok(BytesMut::write_many(self, v))
     }
 
@@ -91,14 +97,16 @@ impl<W: Write> GenericWriter<W> {
 
 #[cfg(feature = "std")]
 impl<W: Write> Writer for GenericWriter<W> {
-    fn write_one(mut self, v: u8) -> Result<Self> {
+    type Error = std::io::Error;
+
+    fn write_one(mut self, v: u8) -> Result<Self, Self::Error> {
         self.n_written += 1;
-        self.writer.write_all(&[v]).map(|()| self).map_err(Into::into)
+        self.writer.write_all(&[v]).map(|()| self)
     }
 
-    fn write_many(mut self, v: &[u8]) -> Result<Self> {
+    fn write_many(mut self, v: &[u8]) -> Result<Self, Self::Error> {
         self.n_written += v.len();
-        self.writer.write_all(v).map(|()| self).map_err(Into::into)
+        self.writer.write_all(v).map(|()| self)
     }
 
     fn capacity(&self) -> usize {
